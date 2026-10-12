@@ -53,8 +53,7 @@ Symbols resolved:
 The driver must be loaded before running `EDRBlind.exe`. `build.bat` handles this automatically. Manual load:
 
 ```bat
-copy RTCore64.sys C:\Windows\Temp\RTCore64.sys
-sc create RTCore64 type= kernel binpath= C:\Windows\Temp\RTCore64.sys
+sc create RTCore64 type= kernel binpath= "%CD%\RTCore64.sys"
 sc start RTCore64
 ```
 
