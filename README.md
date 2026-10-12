@@ -195,7 +195,7 @@ EDRBlind.exe ppl delete MsMpEng.exe MpDefenderCore
 ## Requirements
 
 - Windows 10 / 11 x64
-- Administrator (UAC prompt triggered automatically)
+- Administrator
 - `RTCore64.sys` loadable (blocked on systems with HVCI or the Microsoft Vulnerable Driver Blocklist enforced)
 - `dbghelp.dll` + `symsrv.dll` in the same directory as `Offset_Resolver.exe`
 - Internet on first run (downloads `ntkrnlmp.pdb`); subsequent runs use the local cache at `C:\Symbols\`
