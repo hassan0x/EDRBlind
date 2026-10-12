@@ -1,17 +1,16 @@
 /*
- * edrblind.c -- combined RTCore64 BYOVD tool
+ * EDRBlind.c -- combined RTCore64 BYOVD tool
  *
- * Merges callbacks, etwti, and ppl into one binary.
  * RTCore64.sys must be loaded before running.
  * Reads offsets from config.txt (run Offset_Resolver.exe first).
  *
  * Usage:
- *   edrblind.exe callbacks list
- *   edrblind.exe callbacks delete <driver.sys> [driver2.sys ...]
- *   edrblind.exe etwti list
- *   edrblind.exe etwti disable
- *   edrblind.exe ppl list
- *   edrblind.exe ppl delete <process.exe> [process2.exe ...]
+ *   EDRBlind.exe callbacks list
+ *   EDRBlind.exe callbacks delete <driver.sys> [driver2.sys ...]
+ *   EDRBlind.exe etwti list
+ *   EDRBlind.exe etwti disable
+ *   EDRBlind.exe ppl list
+ *   EDRBlind.exe ppl delete <process.exe> [process2.exe ...]
  */
 
 #include <Windows.h>
@@ -523,15 +522,15 @@ static void cmd_ppl(DWORD64 kern_base, BOOL list_mode,
 static void usage(void)
 {
     printf(
-        "edrblind.exe -- RTCore64 BYOVD tool (callbacks + etwti + ppl)\n"
+        "EDRBlind.exe -- RTCore64 BYOVD tool (callbacks + etwti + ppl)\n"
         "RTCore64.sys must be loaded. Reads offsets from %s.\n"
         "\n"
-        "  edrblind.exe callbacks list\n"
-        "  edrblind.exe callbacks delete <driver.sys> [driver2.sys ...]\n"
-        "  edrblind.exe etwti list\n"
-        "  edrblind.exe etwti disable\n"
-        "  edrblind.exe ppl list\n"
-        "  edrblind.exe ppl delete <process.exe> [process2.exe ...]\n",
+        "  EDRBlind.exe callbacks list\n"
+        "  EDRBlind.exe callbacks delete <driver.sys> [driver2.sys ...]\n"
+        "  EDRBlind.exe etwti list\n"
+        "  EDRBlind.exe etwti disable\n"
+        "  EDRBlind.exe ppl list\n"
+        "  EDRBlind.exe ppl delete <process.exe> [process2.exe ...]\n",
         CFG_FILE);
 }
 

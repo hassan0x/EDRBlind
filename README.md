@@ -32,11 +32,6 @@ A BYOVD (Bring Your Own Vulnerable Driver) post-exploitation tool that blinds ED
 
 Reads `ntoskrnl.exe` from disk, downloads its PDB from `msdl.microsoft.com` via `dbghelp.dll`, and resolves the RVAs of all required kernel globals and `_EPROCESS` field offsets. Writes them to `config.txt`.
 
-Three reliability fixes are built in:
-1. **Connectivity pre-flight** — TCP probe to `msdl.microsoft.com:443` before trying to download; falls back to pattern scan if unreachable
-2. **Stale PDB eviction** — reads the CodeView GUID+age from the ntoskrnl PE header and deletes any cached PDB that doesn't match the current build, preventing a silent wrong-build load
-3. **dbghelp version check** — warns if the loaded `dbghelp.dll` is older than 6.6.x.x
-
 Symbols resolved:
 
 | Symbol | Use |
@@ -51,7 +46,7 @@ Symbols resolved:
 | `_EPROCESS.ActiveProcessLinks` | Field offset for list walk |
 | `_EPROCESS.ImageFileName` | Field offset for process name |
 | `_EPROCESS.Protection` | Field offset for `_PS_PROTECTION` byte |
-| `EtwpGuidHashTableOff` | Build-specific offset to hash table in ETW silo |
+| `EtwpGuidHashTableOff` | Offset of `EtwpGuidHashTable` in `_ETW_SILODRIVERSTATE` — resolved from PDB |
 
 ### Step 2 — Load RTCore64.sys
 
@@ -75,7 +70,7 @@ These are composed into `kread32/64` and `kwrite8/32/64` helpers used by all thr
 EDRBlind.exe <module> <subcommand> [targets...]
 ```
 
-Requires Administrator. UAC manifest embedded — Windows will auto-prompt for elevation.
+Requires Administrator — run from an elevated prompt.
 
 ---
 
@@ -123,7 +118,7 @@ EDRBlind.exe etwti list
 
 Walk: `EtwpDebuggerData (+0x18)` → silo → `EtwpGuidHashTable[bucket 29]` → scan chain for `_ETW_GUID_ENTRY` with `Guid.Data1 == 0xF4E1897C`. Prints `ProviderEnableInfo (+0x060)` and all 8 per-session slots at `EnableInfo (+0x080, step +0x020)`.
 
-Bucket 29 is fixed by the TI GUID hash regardless of build. The hash table offset in the silo (`0x2D0` on Win11 22000+, `0x1D0` on earlier) is resolved by `Offset_Resolver` and stored in `config.txt`.
+Bucket 29 is fixed by the TI GUID hash regardless of build. The hash table offset in the silo is resolved directly from `_ETW_SILODRIVERSTATE` via PDB by `Offset_Resolver` and stored in `config.txt`.
 
 ---
 
