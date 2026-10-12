@@ -1,136 +1,14 @@
-# EDRKiller
+# EDRBlind
 
-A BYOVD (Bring Your Own Vulnerable Driver) post-exploitation tool that tampers with Windows kernel structures to blind EDR/AV products. It abuses the **RTCore64** vulnerable driver to gain arbitrary kernel read/write primitives, then targets three defensive mechanisms:
+A BYOVD (Bring Your Own Vulnerable Driver) post-exploitation tool that blinds EDR/AV products by directly tampering with Windows kernel structures. Uses the **RTCore64** vulnerable driver for arbitrary kernel read/write, then targets five defensive mechanisms across three modules:
 
-- **Kernel notify callbacks** — used by EDRs to monitor process creation, thread creation, and image loads
-- **Object callbacks** — used by EDRs to intercept process/thread handle operations
-- **Registry callbacks** — used by EDRs to monitor registry activity
-- **ETW Threat Intelligence (ETW-TI)** — kernel telemetry source used by many security products
-- **PPL (Protected Process Light)** — protection that prevents tampering with security processes
-
----
-
-## Requirements
-
-- Windows 10 / Windows 11 (x64)
-- Administrator privileges
-- `RTCore64.sys` loaded as a kernel driver
-- `dbghelp.dll` and `symsrv.dll` in the same directory (for PDB symbol resolution)
-- Internet access on first run (downloads `ntoskrnl.pdb` from Microsoft symbol server)
-
----
-
-## How It Works
-
-On startup, `demo.exe`:
-
-1. **Resolves kernel symbols** — loads `ntoskrnl.pdb` via `dbghelp.dll` to find the runtime addresses of key kernel globals (`PspCreateProcessNotifyRoutine`, `ObTypeIndexTable`, `CallbackListHead`, `EtwpDebuggerData`, etc.) and `_EPROCESS` field offsets. This is done fully dynamically so the tool works across kernel versions without hardcoded offsets.
-
-2. **Opens the RTCore64 device** — communicates with the loaded vulnerable driver via `DeviceIoControl` using two IOCTLs:
-   - `0x80002048` — read up to 4 bytes from any kernel address
-   - `0x8000204C` — write up to 4 bytes to any kernel address
-
-3. **Executes the requested command** using those primitives.
-
----
-
-## Usage
-
-```
-demo.exe <command> <subcommand> [targets...]
-```
-
----
-
-## Commands
-
-### `callbacks list`
-
-Lists all registered kernel notify callbacks and object callbacks.
-
-```
-demo.exe callbacks list
-```
-
-Walks and prints:
-- `PspCreateProcessNotifyRoutine` — process creation callbacks (up to 64 slots)
-- `PspCreateThreadNotifyRoutine` — thread creation callbacks
-- `PspLoadImageNotifyRoutine` — image load callbacks
-- `ObCallbacks` on Process (type index 7) and Thread (type index 8) object types
-- `CallbackListHead` — registry callbacks
-
-Each entry shows the slot/node address, callback function pointer, and the owning driver name (resolved by comparing the function address against the loaded driver base address list).
-
----
-
-### `callbacks delete <driver.sys> [driver2.sys ...]`
-
-Removes all callbacks registered by the specified driver(s).
-
-```
-demo.exe callbacks delete WdFilter.sys MpKsl.sys
-```
-
-- **Process/Thread/ImageLoad callbacks**: zeroes the slot in the notify array, effectively removing the callback.
-- **Object callbacks**: writes `0` to the `Active` field of the `CALLBACK_ENTRY_ITEM`, disabling the pre/post operation handlers.
-- **Registry callbacks**: unlinks the node from the doubly-linked `CallbackListHead` list by rewiring `FLINK`/`BLINK` pointers.
-
-Driver names are matched case-insensitively against the owning driver of each callback's function pointer.
-
----
-
-### `etwti list`
-
-Lists the ETW Threat Intelligence provider state.
-
-```
-demo.exe etwti list
-```
-
-Walks `EtwpDebuggerData` → silo pointer → `EtwpGuidHashTable` bucket 29 to find the `Microsoft-Windows-Threat-Intelligence` provider entry (identified by GUID `Data1 = 0xF4E1897C`). Prints:
-
-- Provider entry address
-- `ProviderEnabled` flag
-- Active logger slots (logger ID for each enabled slot)
-
----
-
-### `etwti disable`
-
-Disables the ETW-TI provider kernel-side.
-
-```
-demo.exe etwti disable
-```
-
-Zeroes the `ProviderEnabled` field and all 8 logger slots in the provider entry. This prevents the kernel from emitting ETW-TI events (e.g. `KERNEL_THREATINT_TASK_ALLOCVM`, `PROTECT_VM`, `ReadVM`) that many EDRs rely on for memory-operation telemetry.
-
----
-
-### `ppl list`
-
-Lists all PPL-protected processes.
-
-```
-demo.exe ppl list
-```
-
-Walks the `EPROCESS` list starting from `PsInitialSystemProcess`, reads the `_PS_PROTECTION` byte from each process, and prints processes where the protection byte is non-zero with their type and signer level.
-
-Protection types: `PPL` (1), `Protected` (2)  
-Signer levels: `Authenticode`, `CodeGen`, `Antimalware`, `Lsa`, `Windows`, `WinTcb`, `WinSystem`, `App`
-
----
-
-### `ppl delete <process.exe> [process2.exe ...]`
-
-Strips PPL protection from the specified process(es).
-
-```
-demo.exe ppl delete MsMpEng.exe SenseIR.exe
-```
-
-Finds each named process in the `EPROCESS` list and overwrites its `_PS_PROTECTION` byte with `0x00` using a read-modify-write on the containing aligned DWORD (since the field is not guaranteed to be DWORD-aligned). Once stripped, the process can be opened and terminated with standard APIs.
+| Mechanism | What it blocks |
+|-----------|----------------|
+| Process/Thread/ImageLoad notify callbacks | EDR visibility into process creation, thread creation, image loads |
+| Object callbacks (ObCallbacks) | EDR handle interception on process/thread objects |
+| Registry callbacks | EDR registry monitoring |
+| ETW Threat Intelligence (ETW-TI) | Kernel telemetry for memory operations (alloc, map, inject) |
+| PPL (Protected Process Light) | Protection preventing termination of security processes |
 
 ---
 
@@ -138,11 +16,195 @@ Finds each named process in the `EPROCESS` list and overwrites its `_PS_PROTECTI
 
 | File | Description |
 |------|-------------|
-| `demo.c` | Full source code |
-| `demo.exe` | Compiled x64 binary |
-| `RTCore64.sys` | Vulnerable MSI driver (BYOVD primitive) |
-| `dbghelp.dll` | Debug help library for PDB parsing |
-| `symsrv.dll` | Symbol server client (downloads PDBs from Microsoft) |
+| `Offset_Resolver.c` / `.exe` | Resolves kernel symbol RVAs from ntoskrnl PDB → writes `config.txt` |
+| `EDRBlind.c` / `.exe` | Main tool: callbacks, ETW-TI, PPL via RTCore64 |
+| `RTCore64.sys` | Vulnerable MSI driver — BYOVD kernel R/W primitive |
+| `dbghelp.dll` | PDB parsing (required by Offset_Resolver) |
+| `symsrv.dll` | PDB download from Microsoft symbol server |
+| `config.txt` | Kernel offsets output — read by EDRBlind at runtime |
+| `build.bat` | Compiles both tools and loads RTCore64.sys |
+
+---
+
+## How It Works
+
+### Step 1 — Resolve offsets (`Offset_Resolver.exe`)
+
+Reads `ntoskrnl.exe` from disk, downloads its PDB from `msdl.microsoft.com` via `dbghelp.dll`, and resolves the RVAs of all required kernel globals and `_EPROCESS` field offsets. Writes them to `config.txt`.
+
+Three reliability fixes are built in:
+1. **Connectivity pre-flight** — TCP probe to `msdl.microsoft.com:443` before trying to download; falls back to pattern scan if unreachable
+2. **Stale PDB eviction** — reads the CodeView GUID+age from the ntoskrnl PE header and deletes any cached PDB that doesn't match the current build, preventing a silent wrong-build load
+3. **dbghelp version check** — warns if the loaded `dbghelp.dll` is older than 6.6.x.x
+
+Symbols resolved:
+
+| Symbol | Use |
+|--------|-----|
+| `PspCreateProcessNotifyRoutine` | 64-slot array, process notify callbacks |
+| `PspCreateThreadNotifyRoutine` | 64-slot array, thread notify callbacks |
+| `PspLoadImageNotifyRoutine` | 64-slot array, image load callbacks |
+| `ObTypeIndexTable` | Pointer array to `_OBJECT_TYPE` structs (index 7=Process, 8=Thread) |
+| `CallbackListHead` | Head of registry callback linked list |
+| `EtwpDebuggerData` | ETW silo pointer source (`+0x18`) |
+| `PsInitialSystemProcess` | System EPROCESS — head of process list |
+| `_EPROCESS.ActiveProcessLinks` | Field offset for list walk |
+| `_EPROCESS.ImageFileName` | Field offset for process name |
+| `_EPROCESS.Protection` | Field offset for `_PS_PROTECTION` byte |
+| `EtwpGuidHashTableOff` | Build-specific offset to hash table in ETW silo |
+
+### Step 2 — Load RTCore64.sys
+
+The driver must be loaded before running `EDRBlind.exe`. `build.bat` handles this automatically. Manual load:
+
+```bat
+copy RTCore64.sys C:\Windows\Temp\RTCore64.sys
+sc create RTCore64 type= kernel binpath= C:\Windows\Temp\RTCore64.sys
+sc start RTCore64
+```
+
+RTCore64 exposes two IOCTLs:
+- `0x80002048` — read 4 bytes from any kernel address
+- `0x8000204C` — write 4 bytes to any kernel address
+
+These are composed into `kread32/64` and `kwrite8/32/64` helpers used by all three modules.
+
+### Step 3 — Run EDRBlind.exe
+
+```
+EDRBlind.exe <module> <subcommand> [targets...]
+```
+
+Requires Administrator. UAC manifest embedded — Windows will auto-prompt for elevation.
+
+---
+
+## Commands
+
+### `callbacks list`
+
+Lists all registered kernel callbacks across all five types.
+
+```
+EDRBlind.exe callbacks list
+```
+
+- **`PspCreateProcessNotifyRoutine`** — 64-slot array (`EX_FAST_REF` tagged pointers, low 4 bits stripped). Reads `_EX_CALLBACK_ROUTINE_BLOCK.Function` at `+0x08` of each block.
+- **`PspCreateThreadNotifyRoutine`** — same layout
+- **`PspLoadImageNotifyRoutine`** — same layout
+- **ObCallbacks** — linked list at `_OBJECT_TYPE.CallbackList (+0x0C8)`. Each `CALLBACK_ENTRY_ITEM` has `Active (+0x014)`, `PreOperation (+0x028)`, `PostOperation (+0x030)`.
+- **Registry callbacks** — linked list at `CallbackListHead`. Each `_CMREG_CALLBACK` has `Function (+0x028)`.
+
+Each entry prints the function pointer address and the owning driver name.
+
+---
+
+### `callbacks delete <driver.sys> [...]`
+
+Removes all callbacks registered by the named driver(s).
+
+```
+EDRBlind.exe callbacks delete WdFilter.sys
+```
+
+- **Notify arrays**: zeroes the slot → kernel skips NULL entries
+- **ObCallbacks**: writes `0` to `CALLBACK_ENTRY_ITEM.Active (+0x014)` → kernel skips inactive entries; list stays intact (do not unlink — the kernel frees these itself)
+- **Registry**: unlinks the node by fixing `FLINK`/`BLINK` of the surrounding nodes
+
+---
+
+### `etwti list`
+
+Shows the state of the `Microsoft-Windows-Threat-Intelligence` ETW provider.
+
+```
+EDRBlind.exe etwti list
+```
+
+Walk: `EtwpDebuggerData (+0x18)` → silo → `EtwpGuidHashTable[bucket 29]` → scan chain for `_ETW_GUID_ENTRY` with `Guid.Data1 == 0xF4E1897C`. Prints `ProviderEnableInfo (+0x060)` and all 8 per-session slots at `EnableInfo (+0x080, step +0x020)`.
+
+Bucket 29 is fixed by the TI GUID hash regardless of build. The hash table offset in the silo (`0x2D0` on Win11 22000+, `0x1D0` on earlier) is resolved by `Offset_Resolver` and stored in `config.txt`.
+
+---
+
+### `etwti disable`
+
+Disables ETW-TI kernel-side, stopping telemetry for: `ALLOCVM`, `MAPVIEW`, `READVM`, `WRITEVM`, `PROTECTVM`, `QUEUEUSERAPC`, `SETTHREADCONTEXT`.
+
+```
+EDRBlind.exe etwti disable
+```
+
+Zeroes `ProviderEnableInfo.IsEnabled (+0x060)` and all 8 `EnableInfo[].IsEnabled (+0x080..+0x160)` slots.
+
+---
+
+### `ppl list`
+
+Lists all PPL-protected processes with their protection byte decoded.
+
+```
+EDRBlind.exe ppl list
+```
+
+Walks the `EPROCESS` list from `PsInitialSystemProcess` via `ActiveProcessLinks`. For each entry reads `_PS_PROTECTION` (1 byte, packed: bits 0–2 = Type, bits 4–7 = Signer).
+
+| Type | Meaning |
+|------|---------|
+| 1 | PPL (Protected Process Light) |
+| 2 | PP (Protected Process) |
+
+| Signer | Examples |
+|--------|---------|
+| Antimalware (3) | MpDefenderCore, MsMpEng |
+| Lsa (4) | lsass (RunAsPPL) |
+| Windows (5) | svchost |
+| WinTcb (6) | csrss, services |
+| WinSystem (7) | System, Registry, MemCompression |
+
+---
+
+### `ppl delete <process.exe> [...]`
+
+Strips PPL from the named process(es) by zeroing `_PS_PROTECTION`.
+
+```
+EDRBlind.exe ppl delete MsMpEng.exe
+```
+
+Uses `kwrite8` (read-modify-write on the containing aligned DWORD) since `Protection` is not guaranteed DWORD-aligned. Once stripped, the process can be opened and terminated with standard Win32 APIs.
+
+---
+
+## Quick Start
+
+```bat
+REM 1. Build and load driver (run from the tool directory as Administrator)
+build.bat
+
+REM 2. Resolve kernel offsets for this boot
+Offset_Resolver.exe
+
+REM 3. Use EDRBlind
+EDRBlind.exe callbacks list
+EDRBlind.exe etwti list
+EDRBlind.exe ppl list
+
+REM 4. To blind Defender
+EDRBlind.exe callbacks delete WdFilter.sys
+EDRBlind.exe etwti disable
+EDRBlind.exe ppl delete MsMpEng.exe MpDefenderCore
+```
+
+---
+
+## Requirements
+
+- Windows 10 / 11 x64
+- Administrator (UAC prompt triggered automatically)
+- `RTCore64.sys` loadable (blocked on systems with HVCI or the Microsoft Vulnerable Driver Blocklist enforced)
+- `dbghelp.dll` + `symsrv.dll` in the same directory as `Offset_Resolver.exe`
+- Internet on first run (downloads `ntkrnlmp.pdb`); subsequent runs use the local cache at `C:\Symbols\`
 
 ---
 
